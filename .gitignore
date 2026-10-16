@@ -1,0 +1,5 @@
+.env
+/backend/
+/frontend/
+__pycache__/
+*.pyc
