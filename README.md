@@ -1,71 +1,82 @@
-# Perry-Utkonos: запуск на Arch Linux
+# Perry-Utkonos: Docker Compose и GitHub Actions
 
-Этот репозиторий содержит Docker Compose и файлы сборки для локального запуска проекта на **Arch Linux**. Поддержка других дистрибутивов здесь пока не описана.
+Запуск Fate: React/Vite за Nginx, ASP.NET Core API, PostgreSQL 17 и Redis 7. Исходники скачиваются из отдельных репозиториев на закреплённых commit SHA. Для запуска нужны Git, Python 3, Docker Engine с Compose v2 и Bash.
 
-Состав: React/Vite frontend за Nginx, ASP.NET Core API, PostgreSQL 17 и Redis 7. Исходники frontend и backend остаются в отдельных репозиториях; `scripts/prepare_sources.sh` скачивает зафиксированные версии в локальные игнорируемые каталоги `frontend/` и `backend/`.
+## Быстрый запуск
 
-## Быстрый запуск на Arch Linux
-
-На машине нужны интернет, `systemd` и доступ к официальным репозиториям Arch. Установите Docker Engine, Compose, Buildx, Git и Python:
+На Arch Linux установите инструменты и запустите Docker:
 
 ```bash
 sudo pacman -Syu --needed docker docker-compose docker-buildx git python
 sudo systemctl enable --now docker.service
 ```
 
-Затем:
+Из терминала с доступом к Docker:
 
 ```bash
 git clone https://github.com/Perry-Utkonos/Perry-Utkonos-devops.git
 cd Perry-Utkonos-devops
 bash scripts/prepare_sources.sh
 python3 scripts/init_env.py
-sudo docker compose config --quiet
-sudo docker compose up --build -d
-sudo docker compose ps
+docker compose config --quiet
+docker compose up --build --wait --wait-timeout 180
 ```
 
-Откройте <http://127.0.0.1:8080>. Порт можно изменить через `WEB_PORT` в локальном `.env` перед запуском. По умолчанию он доступен **только на этой машине**.
+На Linux в зависимости от настроек системы команды Docker могут требовать `sudo`. Откройте <http://127.0.0.1:8080> и зарегистрируйтесь. Для проверки переписки нужны два аккаунта, например в обычном и приватном окне браузера. Готовых пользователей в новой базе нет.
 
-`prepare_sources.sh` скачивает следующие снимки и добавляет в них файлы сборки из этого репозитория:
+Наружу открыт только web на `127.0.0.1:${WEB_PORT:-8080}`. API, PostgreSQL и Redis доступны внутри Compose. Порт меняется через `WEB_PORT` в `.env`. Для публичного доступа нужен внешний reverse proxy с HTTPS.
 
-| Репозиторий | Зафиксированный commit |
-|---|---|
-| [Perry-Utkonos-frontend](https://github.com/Perry-Utkonos/Perry-Utkonos-frontend) | `e45b40db90fadb7426a2680891d535a9b7dd2106` |
-| [Perry-Utkonos-backend](https://github.com/Perry-Utkonos/Perry-Utkonos-backend) | `3be60400ea903ea9af59920c0aa941283775732d` |
+## Версии и подготовка
 
-Скрипт не изменяет удалённые репозитории. Его можно запускать повторно: checkout остаётся на той же версии, локальные файлы сборки обновляются. Если локальные исходники переведены на другой commit и содержат изменения, скрипт остановится вместо автоматического сброса правок. При повторном запуске он перезаписывает подготовленные им Dockerfile, конфиги Nginx и `.dockerignore`.
+| Репозиторий | Commit |
+| --- | --- |
+| [Frontend](https://github.com/Perry-Utkonos/Perry-Utkonos-frontend) | `5b5210ea2fce85d8e1cc4315ae1881c23061bb51` |
+| [Backend](https://github.com/Perry-Utkonos/Perry-Utkonos-backend) | `bf8010db3b4256915dd0d05de93ea7fa29957e2e` |
 
-## Что делает подготовка
+`prepare_sources.sh` создаёт игнорируемые каталоги `frontend/` и `backend/`. К backend применяется `frontend/integration/backend.patch` из закреплённой версии frontend: он добавляет совместимый API, JWT-авторизацию, миграции и поддержку чата. Поэтому один исходный backend без этого патча не соответствует текущему frontend. Удалённые репозитории скрипт не меняет.
 
-1. Скачивает и закрепляет версии обоих репозиториев.
-2. Кладёт `Dockerfile`, `nginx.conf` и `.dockerignore` в локальную копию frontend.
-3. Добавляет `.dockerignore` в локальную копию backend.
-4. В локальном `Program.cs` разрешает применение EF Core-миграций по `Database__ApplyMigrations=true` в режиме Production.
-5. Удаляет строку подключения и JWT signing key из **локальной копии** `backend/src/ChatApp.Api/appsettings.json`. Значения для контейнера поступают через Compose.
-6. `init_env.py` создаёт `.env` с отдельными случайными секретами и правами `0600`. Существующий файл он не перезаписывает.
+Файлы Docker/Nginx из frontend сохраняются. Шаблоны из `docker/` используются только при отсутствии соответствующих файлов. Проверяется флаг `Database:ApplyMigrations`, а необязательный `appsettings.json` очищается от строк подключения и JWT-ключа. Рабочие значения API получает через Compose.
 
-Файл `.env`, локальные копии исходников и Git-история исходников не попадают в коммит DevOps-репозитория. `backend/.dockerignore` и `frontend/.dockerignore` исключают `.git` из контекста сборки.
+Повторный запуск распознаёт уже применённый патч. Если патч несовместим или для смены commit потребовалось бы перезаписать локальные изменения, подготовка останавливается. Созданные файлы сборки и патч считаются локальными изменениями: для перехода со старой версии удобнее подготовить новую копию DevOps в другой папке и перенести существующий `.env` с сохранением его прав доступа. Базу и volumes при этом не удаляют.
 
-## Как устроен запуск
-
-`compose.yaml` создаёт новую локальную БД `fate` в volume `postgres_data` и Redis в `redis_data`. Контейнер API ждёт проверки готовности обоих сервисов и применяет существующие EF Core-миграции. Nginx отдаёт собранный frontend, проксирует `/api/` в API и поддерживает WebSocket для `/hubs/chat`. Наружу открыт только `127.0.0.1:8080` (или ваш `WEB_PORT`); PostgreSQL, Redis и API доступны внутри сети Compose.
-
-Исходный удалённый PostgreSQL и его данные здесь **не используются и не переносятся**. Пароль, ранее опубликованный в исходном backend-репозитории, следует сменить отдельно; этот набор файлов его не содержит и не использует.
-
-## Управление и диагностика
+Для проверки другой опубликованной пары версий можно задать полные SHA:
 
 ```bash
-sudo docker compose ps
-sudo docker compose logs --tail=100 api
-sudo docker compose logs --tail=100 web
-sudo docker compose down
+FRONTEND_SHA=<40-символьный-SHA> BACKEND_SHA=<40-символьный-SHA> bash scripts/prepare_sources.sh
 ```
 
-`down` сохраняет данные в volumes. Команда `down -v` удалит volumes вместе с локальной базой данных; применяйте её только когда эти данные больше не нужны.
+Оба commit должны существовать на GitHub и быть совместимы с включённым backend-патчем. Обновляйте закреплённые значения в скрипте через pull request: CI проверяет именно их.
 
-Если API не запускается, начните с `sudo docker compose logs api`: наиболее вероятные причины на первом старте — миграции PostgreSQL или подключение Redis. Для обновления приложения сначала закрепите и проверьте новые commit SHA в `scripts/prepare_sources.sh`, затем пересоздайте локальные каталоги исходников и выполните `sudo docker compose up --build -d`.
+`init_env.py` создаёт `.env` со случайными паролем PostgreSQL и JWT-ключом; на Linux права файла — `0600`. Существующий файл он не перезаписывает. При повторном запуске с готовым `.env` пропустите этот шаг. При сохранённой базе сохраняйте и её пароль.
 
+## GitHub Actions
 
+Workflow `.github/workflows/ci.yml` запускается при push, pull request и вручную через **Actions → Compose CI → Run workflow**. Для него не нужны пароли сервера или вручную созданные GitHub secrets.
 
-I use arch btw
+CI выполняет:
+
+1. Подготовку закреплённых исходников с backend-патчем.
+2. Создание временных секретов и проверку Compose.
+3. `npm ci` и существующие тесты frontend.
+4. Сборку обоих Docker-образов, включая TypeScript/Vite и ASP.NET Core.
+5. Запуск PostgreSQL, Redis, API и Nginx в отдельном Compose-проекте.
+6. Ожидание готовности web: проверяются главная страница и `/api/health`, включая соединение API с БД.
+7. Существующие интеграционные тесты frontend через Nginx: аккаунты, JWT, сохранение данных, лайки и SignalR-чат.
+
+При ошибке CI печатает состояния контейнеров и последние 100 строк журналов. После выполнения удаляются только временные контейнеры и volumes отдельного CI-проекта на GitHub runner. На сервер приложение автоматически не развёртывается.
+
+Nginx пишет путь без query-параметров, чтобы SignalR JWT не попадал в обычный access log. Для маршрута чата отключён подробный upstream error log; в API категория `Hosting.Diagnostics` ограничена уровнем `Warning`.
+
+## Управление и данные
+
+```bash
+docker compose ps
+docker compose logs --tail=100 api web
+docker compose down
+```
+
+`web` должен стать `healthy`. Если API не запускается, проверьте его журнал: перед стартом применяются EF Core-миграции. Начальная миграция предназначена для пустой БД; существующую схему нужно сверить с ней отдельно.
+
+`down` сохраняет PostgreSQL в `postgres_data` и Redis в `redis_data`. Не добавляйте `-v`, если данные нужны: этот флаг удаляет volumes. Ранее выданная удалённая БД здесь не используется и не переносится.
+
+После подготовки новых проверенных исходников выполните `docker compose up --build --wait --wait-timeout 180`. Сохраняйте `.env` и volumes между обновлениями. В Git не попадают `.env`, локальные исходники, их история и результаты сборки; `.dockerignore` также исключает `.git` из контекста Docker.

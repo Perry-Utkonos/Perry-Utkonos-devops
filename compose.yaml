@@ -35,6 +35,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
+      Logging__LogLevel__Microsoft.AspNetCore.Hosting.Diagnostics: Warning
       ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=fate;Username=fate;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD_is_required}
       ConnectionStrings__Redis: redis:6379
       Jwt__Issuer: chatapp
@@ -56,6 +57,12 @@ services:
     depends_on:
       api:
         condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ && wget -q -O /dev/null http://127.0.0.1/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
     restart: unless-stopped
 
 volumes:
